@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Dict
 import json
 
-from src.extraction.extract_bookmarks import extract_bookmarks
+from src.extraction.extract_bookmarks import extract_bookmarks, BookmarkStats
 from src.optimization.optimize_bookmarks import BookmarkOptimizer
 from src.generation.generate_html import generate_html
 from config import INPUT_FILE, OUTPUT_JSON, OUTPUT_HTML, ORGANIZED_JSON
@@ -17,7 +17,7 @@ from config import INPUT_FILE, OUTPUT_JSON, OUTPUT_HTML, ORGANIZED_JSON
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(message)s'  # Only show the message, no timestamp or level
 )
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,16 @@ def process_bookmarks(
     """
     try:
         # Step 1: Extract bookmarks from HTML
-        logger.info(f"Reading bookmarks from {input_file}")
         bookmarks = extract_bookmarks(input_file)
-        logger.info(f"Extracted {len(bookmarks)} bookmarks")
+        
+        # Calculate statistics using BookmarkStats
+        stats = BookmarkStats()
+        stats.calculate_statistics(bookmarks)
+        original_folders = len(stats.stats['folders'])
         
         # Save raw bookmarks to JSON
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(bookmarks, indent=4), encoding='utf-8')
-        logger.info(f"Saved raw bookmarks to {output_json}")
         
         # Step 2: Optimize bookmarks using domain clustering
         optimizer = BookmarkOptimizer(bookmarks)
@@ -51,17 +53,16 @@ def process_bookmarks(
         # Save organized bookmarks
         organized_json.parent.mkdir(parents=True, exist_ok=True)
         organized_json.write_text(json.dumps(organized, indent=4), encoding='utf-8')
-        logger.info(f"Saved organized bookmarks to {organized_json}")
         
         # Step 3: Generate HTML output
         generate_html(organized, output_html)
-        logger.info(f"Generated HTML output at {output_html}")
         
         # Print summary
         print("\nProcessing Summary:")
         print("==================")
         print(f"Total Bookmarks: {len(bookmarks)}")
-        print(f"Total Categories: {len(organized)}")
+        print(f"Original Folders: {original_folders}")
+        print(f"Maximum Folder Depth: {stats.stats['max_depth']}")
         print(f"Input File: {input_file}")
         print(f"Output Files:")
         print(f"  - Raw JSON: {output_json}")
