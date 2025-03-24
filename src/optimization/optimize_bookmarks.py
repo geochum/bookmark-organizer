@@ -17,6 +17,12 @@ from urllib.parse import urlparse
 import re
 import math
 
+from config import (
+    TFIDF_PARAMS, N_CLUSTERS, CLUSTERING_METRIC, CLUSTERING_LINKAGE,
+    DOMAIN_CATEGORIES, COMMON_WORDS, FOLDER_PATH_THRESHOLD,
+    SECONDARY_WORD_THRESHOLD, TOOL_DOMAINS, CLASS_KEYWORDS
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -29,14 +35,7 @@ class BookmarkOptimizer:
     
     def __init__(self, bookmarks: List[Dict]) -> None:
         self.bookmarks = bookmarks
-        self.vectorizer = TfidfVectorizer(
-            stop_words='english',
-            max_features=1000,  # Reduced from 2000 to focus on more important terms
-            token_pattern=r'(?u)\b[a-zA-Z][a-zA-Z]+\b',  # Only words with 2+ letters
-            ngram_range=(1, 2),  # Include bigrams for better context
-            min_df=2,  # Term must appear in at least 2 documents
-            max_df=0.8  # Ignore terms that appear in more than 80% of documents
-        )
+        self.vectorizer = TfidfVectorizer(**TFIDF_PARAMS)
         
     def _extract_domain_features(self) -> Tuple[List[str], Dict[str, List[Dict]]]:
         """Extract domain-based features from bookmarks."""
@@ -61,7 +60,7 @@ class BookmarkOptimizer:
         
         return features, domain_bookmarks
     
-    def _cluster_bookmarks(self, features: List[str], n_clusters: int = 10) -> List[int]:
+    def _cluster_bookmarks(self, features: List[str], n_clusters: int = N_CLUSTERS) -> List[int]:
         """Cluster bookmarks based on domain and title similarity."""
         # Create TF-IDF vectors
         try:
@@ -70,8 +69,8 @@ class BookmarkOptimizer:
             # Perform clustering with Euclidean distance
             clustering = AgglomerativeClustering(
                 n_clusters=n_clusters,
-                metric='euclidean',
-                linkage='ward'
+                metric=CLUSTERING_METRIC,
+                linkage=CLUSTERING_LINKAGE
             )
             clusters = clustering.fit_predict(vectors.toarray())
             
@@ -82,32 +81,12 @@ class BookmarkOptimizer:
     
     def _fallback_domain_clustering(self, features: List[str]) -> List[int]:
         """Fallback method using simple domain-based grouping."""
-        # Group domains by their main category
-        domain_categories = {
-            'google': 0, 'gmail': 0, 'youtube': 0,  # Google services
-            'github': 1, 'gitlab': 1, 'bitbucket': 1,  # Code hosting
-            'amazon': 2, 'ebay': 2, 'walmart': 2,  # Shopping
-            'facebook': 3, 'instagram': 3, 'twitter': 3,  # Social media
-            'linkedin': 4, 'indeed': 4, 'glassdoor': 4,  # Professional
-            'stackoverflow': 5, 'stackexchange': 5, 'quora': 5,  # Q&A
-            'reddit': 6, 'pinterest': 6, 'tumblr': 6,  # Social content
-            'dropbox': 7, 'onedrive': 7, 'box': 7,  # Cloud storage
-            'netflix': 8, 'spotify': 8, 'hulu': 8,  # Entertainment
-            'wikipedia': 9, 'scholar': 9, 'research': 9,  # Education/Research
-            'news': 10, 'reuters': 10, 'bloomberg': 10,  # News
-            'weather': 11, 'maps': 11, 'calendar': 11,  # Utilities
-            'bank': 12, 'paypal': 12, 'venmo': 12,  # Finance
-            'health': 13, 'medical': 13, 'fitness': 13,  # Health
-            'travel': 14, 'booking': 14, 'airline': 14,  # Travel
-            'default': 15  # Default category
-        }
-        
         clusters = []
         for feature in features:
             domain = feature.split()[0] if feature else "unknown"
             # Try to find a matching category
-            category = 15  # Default category
-            for key, value in domain_categories.items():
+            category = DOMAIN_CATEGORIES['default']
+            for key, value in DOMAIN_CATEGORIES.items():
                 if key in domain.lower():
                     category = value
                     break
@@ -139,19 +118,10 @@ class BookmarkOptimizer:
             for folder in bookmark.get('folder_path', []):
                 folder_paths[folder.lower()] += 1
         
-        # Common words to exclude
-        common_words = {
-            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
-            'this', 'that', 'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may',
-            'might', 'must', 'can', 'your', 'my', 'our', 'their', 'his', 'her', 'its', 'com',
-            'org', 'net', 'edu', 'gov', 'io', 'www', 'home', 'page', 'site', 'official', 'website'
-        }
-        
         # Find most common words
         word_counts = defaultdict(int)
         for word in text:
-            if word not in common_words and len(word) > 2:
+            if word not in COMMON_WORDS and len(word) > 2:
                 word_counts[word] += 1
         
         # Get top words by frequency
@@ -159,7 +129,7 @@ class BookmarkOptimizer:
         
         # Try to use folder path as category if it's common enough
         most_common_folder = max(folder_paths.items(), key=lambda x: x[1]) if folder_paths else None
-        if most_common_folder and most_common_folder[1] >= len(bookmarks) * 0.4:  # If folder appears in 40% of bookmarks
+        if most_common_folder and most_common_folder[1] >= len(bookmarks) * FOLDER_PATH_THRESHOLD:
             return most_common_folder[0].capitalize()
         
         if top_words:
@@ -171,7 +141,7 @@ class BookmarkOptimizer:
             primary_count = top_words[0][1]
             for word, count in top_words[1:]:
                 if (word not in primary.lower() and 
-                    count >= primary_count * 0.4):  # Only include if frequency is at least 40% of primary
+                    count >= primary_count * SECONDARY_WORD_THRESHOLD):
                     secondary.append(word.capitalize())
             
             if secondary:
@@ -190,15 +160,13 @@ class BookmarkOptimizer:
         # Check if it's a class-related link
         title = bookmark.get('title', '').lower()
         url = bookmark.get('url', '').lower()
-        class_keywords = {'canvas', 'class', 'lecture', 'homework', 'assignment', 'course', 'syllabus'}
-        if any(keyword in title or keyword in url for keyword in class_keywords):
+        if any(keyword in title or keyword in url for keyword in CLASS_KEYWORDS):
             return True
             
         # Check if it's a frequently used tool
-        tool_domains = {'google.com', 'gmail.com', 'github.com', 'stackoverflow.com', 'wikipedia.org'}
         try:
             domain = urlparse(url).netloc
-            if domain in tool_domains:
+            if domain in TOOL_DOMAINS:
                 return True
         except:
             pass
@@ -256,12 +224,11 @@ class BookmarkOptimizer:
 
 def main() -> None:
     """Main function to optimize bookmark organization."""
-    input_file = Path("data/output/bookmarks.json")
-    output_file = Path("data/output/organized_bookmarks.json")
+    from config import INPUT_FILE, OUTPUT_JSON, ORGANIZED_JSON
     
-    logger.info(f"Reading bookmarks from {input_file}")
+    logger.info(f"Reading bookmarks from {INPUT_FILE}")
     try:
-        bookmarks = json.loads(input_file.read_text())
+        bookmarks = json.loads(INPUT_FILE.read_text())
         logger.info(f"Read {len(bookmarks)} bookmarks")
         
         # Create optimizer and generate suggestions
@@ -269,7 +236,7 @@ def main() -> None:
         organized = optimizer.suggest_organization()
         
         # Save organized bookmarks
-        optimizer.save_organization(organized, output_file)
+        optimizer.save_organization(organized, ORGANIZED_JSON)
         
         # Print suggestions
         optimizer.print_suggestions(organized)
