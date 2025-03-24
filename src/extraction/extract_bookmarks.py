@@ -13,6 +13,8 @@ from collections import defaultdict
 from urllib.parse import urlparse
 from datetime import datetime
 
+from config import INPUT_FILE, OUTPUT_JSON
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -190,13 +192,10 @@ def extract_bookmarks(input_file: Path) -> List[Dict]:
 
 def main() -> None:
     """Main function to process bookmarks and generate statistics."""
-    input_file = Path("data/input/bookmarks_3_23_25.html")
-    output_file = Path("data/output/bookmarks.json")
-    
-    logger.info(f"Reading bookmarks from {input_file}")
+    logger.info(f"Reading bookmarks from {INPUT_FILE}")
     try:
         # Extract bookmarks and gather statistics
-        bookmarks = extract_bookmarks(input_file)
+        bookmarks = extract_bookmarks(INPUT_FILE)
         
         # Calculate and print statistics
         stats = BookmarkStats()
@@ -206,9 +205,9 @@ def main() -> None:
         stats.print_statistics()
         
         # Save to JSON
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(json.dumps(bookmarks, indent=4), encoding="utf-8")
-        logger.info(f"Successfully wrote bookmarks to {output_file}")
+        OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
+        OUTPUT_JSON.write_text(json.dumps(bookmarks, indent=4), encoding="utf-8")
+        logger.info(f"Successfully wrote bookmarks to {OUTPUT_JSON}")
         
     except Exception as e:
         logger.error(f"Error processing bookmarks: {e}")
