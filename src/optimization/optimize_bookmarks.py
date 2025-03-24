@@ -7,7 +7,7 @@ Analyzes bookmarks from JSON and suggests improved organization using domain-bas
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Union
 from collections import defaultdict
 from datetime import datetime
 import numpy as np
@@ -26,9 +26,63 @@ from config import (
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(message)s'  # Only show the message, no timestamp or level
 )
 logger = logging.getLogger(__name__)
+
+class FolderNode:
+    """Represents a folder in the bookmark hierarchy."""
+    def __init__(self, name: str, add_date: str = "", last_modified: str = ""):
+        self.name = name
+        self.add_date = add_date
+        self.last_modified = last_modified
+        self.bookmarks: List[Dict] = []
+        self.subfolders: Dict[str, FolderNode] = {}
+    
+    def add_bookmark(self, bookmark: Dict) -> None:
+        """Add a bookmark to this folder."""
+        self.bookmarks.append(bookmark)
+    
+    def get_subfolder(self, name: str) -> 'FolderNode':
+        """Get or create a subfolder with the given name."""
+        if name not in self.subfolders:
+            self.subfolders[name] = FolderNode(name)
+        return self.subfolders[name]
+    
+    def count_bookmarks(self) -> int:
+        """Count total number of bookmarks in this folder and all subfolders."""
+        total = len(self.bookmarks)  # Count bookmarks in current folder
+        for subfolder in self.subfolders.values():
+            total += subfolder.count_bookmarks()  # Add bookmarks from subfolders
+        return total
+    
+    def count_folders(self) -> int:
+        """Count total number of folders including this folder and all subfolders."""
+        total = 1  # Count this folder
+        for subfolder in self.subfolders.values():
+            total += subfolder.count_folders()  # Add folders from subfolders
+        return total
+    
+    def to_dict(self) -> Dict:
+        """Convert the folder node to a dictionary for JSON serialization."""
+        return {
+            'name': self.name,
+            'add_date': self.add_date,
+            'last_modified': self.last_modified,
+            'bookmarks': self.bookmarks,
+            'subfolders': {name: folder.to_dict() for name, folder in self.subfolders.items()}
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'FolderNode':
+        """Create a folder node from a dictionary."""
+        node = cls(data['name'], data['add_date'], data['last_modified'])
+        node.bookmarks = data['bookmarks']
+        node.subfolders = {
+            name: cls.from_dict(folder_data)
+            for name, folder_data in data['subfolders'].items()
+        }
+        return node
 
 class BookmarkOptimizer:
     """Class to analyze and suggest optimized bookmark organization using domain clustering."""
@@ -160,8 +214,15 @@ class BookmarkOptimizer:
         # Check if it's a class-related link
         title = bookmark.get('title', '').lower()
         url = bookmark.get('url', '').lower()
+        
+        # Only consider class-related links if they're from specific domains
         if any(keyword in title or keyword in url for keyword in CLASS_KEYWORDS):
-            return True
+            try:
+                domain = urlparse(url).netloc
+                if domain in TOOL_DOMAINS:
+                    return True
+            except:
+                pass
             
         # Check if it's a frequently used tool
         try:
@@ -173,54 +234,142 @@ class BookmarkOptimizer:
             
         return False
 
-    def suggest_organization(self) -> List[Dict]:
-        """Generate optimized organization that preserves original folder structure."""
-        organized_bookmarks = []
+    def suggest_organization(self) -> Dict:
+        """Generate optimized organization using content-based clustering."""
+        # Create root folder
+        root = FolderNode("root")
+        bookmarks_bar = FolderNode("Bookmarks Bar")
+        root.subfolders["Bookmarks Bar"] = bookmarks_bar
         
-        # Process each bookmark
+        # Track seen URLs to handle duplicates
+        seen_urls = set()
+        total_unique_bookmarks = 0
+        
+        # First pass: Extract features and prepare for clustering
+        features = []
+        bookmarks_to_cluster = []
+        
         for bookmark in self.bookmarks:
-            # Get the folder path
-            folder_path = bookmark.get('folder_path', [])
-            if not folder_path:
-                folder_path = ['Uncategorized']
+            url = bookmark.get('url', '')
             
-            # If it's frequently used, add to Bookmarks Bar
-            if self._is_frequently_used(bookmark):
-                bookmark_copy = bookmark.copy()
-                bookmark_copy['folder_path'] = ['Bookmarks Bar']
-                organized_bookmarks.append(bookmark_copy)
+            # Skip if we've seen this URL before
+            if url in seen_urls:
+                logger.debug(f"Skipping duplicate bookmark: {bookmark.get('title', '')} ({url})")
+                continue
+            seen_urls.add(url)
+            total_unique_bookmarks += 1
             
-            # Always add to original folder structure
-            bookmark_copy = bookmark.copy()
-            organized_bookmarks.append(bookmark_copy)
+            # Create feature text from title, domain, and original folder path
+            title = bookmark.get('title', '').lower()
+            try:
+                domain = urlparse(url).netloc
+                domain = re.sub(r'^www\.|\.com$|\.org$|\.net$|\.edu$|\.gov$', '', domain)
+            except:
+                domain = ''
+            
+            # Add original folder path to features
+            folder_path = ' '.join(bookmark.get('folder_path', []))
+            
+            # Create feature text
+            feature_text = f"{title} {domain} {folder_path}"
+            features.append(feature_text)
+            bookmarks_to_cluster.append(bookmark)
         
-        return organized_bookmarks
+        # Perform clustering to group similar bookmarks
+        try:
+            # Create TF-IDF vectors
+            vectors = self.vectorizer.fit_transform(features)
+            
+            # Perform clustering
+            clustering = AgglomerativeClustering(
+                n_clusters=min(10, len(bookmarks_to_cluster)),  # Limit to 10 clusters or less
+                metric=CLUSTERING_METRIC,
+                linkage=CLUSTERING_LINKAGE
+            )
+            clusters = clustering.fit_predict(vectors.toarray())
+            
+            # Group bookmarks by cluster
+            cluster_bookmarks = defaultdict(list)
+            for bookmark, cluster_id in zip(bookmarks_to_cluster, clusters):
+                cluster_bookmarks[cluster_id].append(bookmark)
+            
+            # Create folders based on clusters
+            for cluster_id, bookmarks in cluster_bookmarks.items():
+                # Generate folder name based on cluster content
+                folder_name = self._generate_cluster_name(bookmarks)
+                
+                # Create folder and add bookmarks
+                folder = root.get_subfolder(folder_name)
+                for bookmark in bookmarks:
+                    folder.add_bookmark(bookmark.copy())
+            
+        except Exception as e:
+            logger.warning(f"Clustering failed: {e}. Using domain-based grouping instead.")
+            # Fallback to domain-based grouping
+            domain_folders = defaultdict(list)
+            for bookmark in bookmarks_to_cluster:
+                try:
+                    domain = urlparse(bookmark.get('url', '')).netloc
+                    domain = re.sub(r'^www\.|\.com$|\.org$|\.net$|\.edu$|\.gov$', '', domain)
+                    domain_folders[domain].append(bookmark)
+                except:
+                    domain_folders['Other'].append(bookmark)
+            
+            # Create folders based on domains
+            for domain, bookmarks in domain_folders.items():
+                folder = root.get_subfolder(domain.capitalize())
+                for bookmark in bookmarks:
+                    folder.add_bookmark(bookmark.copy())
+        
+        # Second pass: Add frequently used bookmarks to Bookmarks Bar
+        bookmarks_bar_urls = set()
+        for bookmark in self.bookmarks:
+            url = bookmark.get('url', '')
+            
+            # Skip if we've seen this URL in Bookmarks Bar
+            if url in bookmarks_bar_urls:
+                continue
+                
+            if self._is_frequently_used(bookmark):
+                bookmarks_bar_urls.add(url)
+                bookmark_copy = bookmark.copy()
+                bookmarks_bar.add_bookmark(bookmark_copy)
+        
+        # Log summary of duplicate removal and bookmark counts
+        total_bookmarks = len(self.bookmarks)
+        if total_bookmarks != total_unique_bookmarks:
+            logger.info(f"Removed {total_bookmarks - total_unique_bookmarks} duplicate bookmarks")
+        
+        # Log bookmark counts by folder
+        logger.info("\nBookmark Counts:")
+        logger.info(f"Total Bookmarks: {total_bookmarks}")
+        logger.info(f"Unique Bookmarks: {total_unique_bookmarks}")
+        logger.info(f"Bookmarks in Bookmarks Bar: {len(bookmarks_bar.bookmarks)}")
+        logger.info(f"Total Folders: {root.count_folders()}")
+        
+        return root.to_dict()
 
-    def save_organization(self, organized: List[Dict], output_file: Path) -> None:
+    def save_organization(self, organized: Dict, output_file: Path) -> None:
         """Save the organized bookmarks to a JSON file preserving folder structure."""
-        # Save the flat list directly
+        # Save the tree structure directly
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_file.write_text(json.dumps(organized, indent=4), encoding='utf-8')
         logger.info(f"Saved organized bookmarks to {output_file}")
 
-    def print_suggestions(self, organized: List[Dict]) -> None:
+    def print_suggestions(self, organized: Dict) -> None:
         """Print the optimized bookmark organization."""
         print("\nOptimized Bookmark Organization:")
         print("==============================")
         
-        # Group bookmarks by folder
-        folder_bookmarks = defaultdict(list)
-        for bookmark in organized:
-            folder_path = bookmark.get('folder_path', ['Uncategorized'])
-            folder = '/'.join(folder_path)
-            folder_bookmarks[folder].append(bookmark)
+        def print_folder(folder: Dict, level: int = 0) -> None:
+            indent = "  " * level
+            print(f"{indent}{folder['name']}:")
+            for bookmark in sorted(folder['bookmarks'], key=lambda x: x.get('title', '').lower()):
+                print(f"{indent}  - {bookmark['title']}")
+            for subfolder in sorted(folder['subfolders'].values(), key=lambda x: x['name'].lower()):
+                print_folder(subfolder, level + 1)
         
-        # Print bookmarks by folder
-        for folder, bookmarks in sorted(folder_bookmarks.items()):
-            print(f"\n{folder}:")
-            print("-" * len(folder))
-            for bookmark in sorted(bookmarks, key=lambda x: x.get('title', '').lower()):
-                print(f"  - {bookmark['title']}")
+        print_folder(organized)
 
 def main() -> None:
     """Main function to optimize bookmark organization."""
