@@ -1,4 +1,4 @@
-# Bookmark Organizer
+# BookmarkMaster
 
 A Python tool that helps organize and optimize your browser bookmarks by analyzing their content and suggesting an improved structure.
 
@@ -9,6 +9,7 @@ A Python tool that helps organize and optimize your browser bookmarks by analyzi
 - Moves frequently used bookmarks to the Bookmarks Bar
 - Generates browser-compatible HTML output
 - Supports nested folder structures
+- Configurable parameters for fine-tuning the optimization process
 
 ## Setup
 
@@ -26,11 +27,41 @@ A Python tool that helps organize and optimize your browser bookmarks by analyzi
 3. Add your bookmarks file to `data/input/`
    - Export your bookmarks from your browser as HTML
    - Place the exported file in the `data/input/` directory
+   - Update the `INPUT_FILE` path in `config.py` if your file has a different name
 
 4. Install required Python packages:
    ```bash
    pip install -r requirements.txt
    ```
+
+## Configuration
+
+The tool's behavior can be customized by modifying `config.py`. Key configuration options include:
+
+- File paths for input and output files
+- TF-IDF vectorizer parameters for text analysis
+- Clustering parameters for bookmark grouping
+- Domain categories for fallback clustering
+- Thresholds for folder path and word frequency
+- Frequently used tool domains and class-related keywords
+
+Example configuration:
+```python
+# TF-IDF parameters
+TFIDF_PARAMS = {
+    'stop_words': 'english',
+    'max_features': 1000,
+    'token_pattern': r'(?u)\b[a-zA-Z][a-zA-Z]+\b',
+    'ngram_range': (1, 2),
+    'min_df': 2,
+    'max_df': 0.8
+}
+
+# Clustering parameters
+N_CLUSTERS = 10
+CLUSTERING_METRIC = 'euclidean'
+CLUSTERING_LINKAGE = 'ward'
+```
 
 ## Usage
 
@@ -51,15 +82,20 @@ A Python tool that helps organize and optimize your browser bookmarks by analyzi
 
 ```
 bookmark-organizer/
+├── config.py              # Configuration parameters
 ├── data/
-│   ├── input/          # Place your input bookmarks file here
-│   └── output/         # Generated files will be saved here
+│   ├── input/            # Place your input bookmarks file here
+│   └── output/           # Generated files will be saved here
 ├── src/
-│   ├── optimization/   # Core optimization logic
-│   └── utils/         # Utility functions
-├── main.py            # Main entry point
-├── requirements.txt   # Python dependencies
-└── README.md         # This file
+│   ├── extraction/       # Bookmark extraction from HTML
+│   │   └── extract_bookmarks.py
+│   ├── optimization/     # Core optimization logic
+│   │   └── optimize_bookmarks.py
+│   └── generation/       # HTML generation
+│       └── generate_html.py
+├── main.py              # Main entry point
+├── requirements.txt     # Python dependencies
+└── README.md           # This file
 ```
 
 ## Dependencies
@@ -68,6 +104,8 @@ bookmark-organizer/
 - scikit-learn
 - numpy
 - pandas
+- beautifulsoup4
+- lxml
 
 ## License
 
