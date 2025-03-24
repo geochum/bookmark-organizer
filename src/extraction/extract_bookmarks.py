@@ -18,7 +18,7 @@ from config import INPUT_FILE, OUTPUT_JSON
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(message)s'  # Only show the message, no timestamp or level
 )
 logger = logging.getLogger(__name__)
 
