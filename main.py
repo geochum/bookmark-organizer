@@ -12,6 +12,7 @@ import json
 from src.extraction.extract_bookmarks import extract_bookmarks
 from src.optimization.optimize_bookmarks import BookmarkOptimizer
 from src.generation.generate_html import generate_html
+from config import INPUT_FILE, OUTPUT_JSON, OUTPUT_HTML, ORGANIZED_JSON
 
 # Configure logging
 logging.basicConfig(
@@ -73,15 +74,8 @@ def process_bookmarks(
 
 def main() -> None:
     """Main function to run the bookmark optimization process."""
-    # Define paths
-    base_dir = Path(__file__).parent
-    input_file = base_dir / "data/input/bookmarks_3_23_25.html"
-    output_json = base_dir / "data/output/bookmarks.json"
-    organized_json = base_dir / "data/output/organized_bookmarks.json"
-    output_html = base_dir / "data/output/organized_bookmarks.html"
-    
-    # Process bookmarks
-    process_bookmarks(input_file, output_json, output_html, organized_json)
+    # Process bookmarks using configuration paths
+    process_bookmarks(INPUT_FILE, OUTPUT_JSON, OUTPUT_HTML, ORGANIZED_JSON)
 
 if __name__ == "__main__":
     main() 
